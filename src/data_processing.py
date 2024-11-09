@@ -59,49 +59,41 @@ class StatisticsCalculator:
 class MicroscopyTileDataset(Dataset):
     def __init__(self, h5_file_path, brains, global_mean, global_std, tile_size=64, preload_images=False):
         self.h5_file_path = h5_file_path
-        self.brains = brains  # List of brain group names to load
-        self.global_mean = global_mean
-        self.global_std = global_std
+        self.brains = brains
+        self.global_mean = global_mean / 255.0  # Adjust mean for normalized range
+        self.global_std = global_std / 255.0    # Adjust std for normalized range
         self.tile_size = tile_size
-        self.images = {}  # Dictionary to hold images if preloaded
+        self.images = {}  # Store images in RAM if preloaded
         if preload_images:
-            self._preload_images()  # Load images to RAM for faster access
-
-    def _preload_images(self):
-        with h5py.File(self.h5_file_path, 'r') as f:
-            for brain in self.brains:
-                self.images[brain] = {img: f[brain][img][()] for img in f[brain]}
+            self._preload_images()
 
     def __getitem__(self, index):
-        # Unpack the tuple: (brain, image, row, column, tile_size)
         brain, image, row, col = index
         tile_size = self.tile_size
 
-        # Retrieve image data either from RAM or from file
         if brain in self.images:
             img = self.images[brain][image]
         else:
             with h5py.File(self.h5_file_path, 'r') as f:
                 img = f[brain][image][()]
 
-        # Extract the tile from the image
         tile = img[row:row+tile_size, col:col+tile_size]
 
-        # Ensure tile is the correct shape and pad if necessary
         if tile.shape != (tile_size, tile_size):
             tile = np.pad(tile, ((0, max(0, tile_size - tile.shape[0])),
                                  (0, max(0, tile_size - tile.shape[1]))),
                           mode='constant')
 
-        # Convert tile to tensor, add channel dimension, and standardize
-        tile_tensor = torch.tensor(tile, dtype=torch.float32).unsqueeze(0)
+        # Convert tile to float32 and normalize from 0-255 to 0-1
+        tile_tensor = torch.tensor(tile, dtype=torch.float32).unsqueeze(0) / 255.0
+        # Standardize using global mean and std
         tile_tensor = (tile_tensor - self.global_mean) / self.global_std
 
         return tile_tensor
 
     def __len__(self):
         # Define length as number of images * possible tile positions, or use a fixed count for epochs
-        return 1000  # Example, adjust based on requirements
+        return 100  # Example, adjust based on requirements
 
 import random
 from torch.utils.data import Sampler
