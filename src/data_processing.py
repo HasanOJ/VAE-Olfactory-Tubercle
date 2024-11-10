@@ -4,7 +4,6 @@ import torch
 import random
 from torch.utils.data import Dataset, DataLoader, Sampler
 from typing import Dict, List, Tuple
-import matplotlib.pyplot as plt
 
 class BrainTileDataset(Dataset):
     """Dataset for accessing brain image tiles."""
