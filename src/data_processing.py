@@ -4,11 +4,12 @@ import torch
 import random
 from torch.utils.data import Dataset, DataLoader, Sampler
 from typing import Dict, List, Tuple
+from torchvision import transforms
 
 class BrainTileDataset(Dataset):
     """Dataset for accessing brain image tiles."""
 
-    def __init__(self, file_path: str, global_stats: Dict[str, float], test_set: str, testing: bool = False):
+    def __init__(self, file_path: str, global_stats: Dict[str, float], test_set: str, testing: bool = False, tile_size: int = 64):
         """
         Initialize the dataset.
         
@@ -17,12 +18,14 @@ class BrainTileDataset(Dataset):
             global_stats: Dictionary containing 'mean' and 'std' for standardization
             test_set: Brain ID to be used as the test set
             testing: Boolean flag to indicate if the dataset is for testing
+            tile_size: Size of the tiles to extract
         """
         self.file_path = file_path
         self.global_mean = global_stats['mean'] / 255.0  # Normalize to 0-1 range
         self.global_std = global_stats['std'] / 255.0
         self.images = {}
         self.testing = testing
+        self.tile_size = tile_size
 
         # Load images into RAM
         with h5py.File(self.file_path, 'r') as f:
@@ -32,6 +35,16 @@ class BrainTileDataset(Dataset):
                 self.images[brain] = {}
                 for img_key in f[brain].keys():
                     self.images[brain][img_key] = f[brain][img_key][()]
+
+        # Define augmentations
+        self.augmentations = transforms.Compose([
+            transforms.RandomApply([transforms.RandomHorizontalFlip()], p=0.5),
+            transforms.RandomApply([transforms.RandomVerticalFlip()], p=0.5),
+            transforms.RandomApply([transforms.RandomResizedCrop(size=tile_size, scale=(0.9, 1.0))], p=0.5),
+            transforms.RandomApply([transforms.ColorJitter(brightness=0.1, contrast=0.1)], p=0.5),
+            transforms.RandomApply([transforms.Lambda(lambda x: x + torch.randn_like(x) * 0.1)], p=0.5),  # Gaussian noise
+        ])
+
     
     def __getitem__(self, index: Tuple[str, str, int, int, int]) -> torch.Tensor:
         """
@@ -58,6 +71,10 @@ class BrainTileDataset(Dataset):
         # Convert to torch tensor, add channel dimension, normalize to 0-1 range, and standardize
         tile_tensor = torch.from_numpy(tile).float().unsqueeze(0) / 255.0
         tile_tensor = (tile_tensor - self.global_mean) / self.global_std
+        
+        # Apply augmentations if not in testing mode
+        if not self.testing:
+            tile_tensor = self.augmentations(tile_tensor)
         
         return tile_tensor
 
@@ -135,7 +152,7 @@ def create_dataloader(file_path: str, global_stats: Dict[str, float],
         samples_per_epoch: Number of tiles to sample per epoch
     """
     # Create training dataset
-    train_dataset = BrainTileDataset(file_path, global_stats, test_set=kwargs['test_set'])
+    train_dataset = BrainTileDataset(file_path, global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'])
     
     # Create testing dataset
     # test_dataset = BrainTileDataset(file_path, global_stats, test_set=test_set, testing=True)
