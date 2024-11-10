@@ -1,12 +1,24 @@
 import argparse
-import h5py
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import TensorBoardLogger
+from model import VAE
 from data_processing import BrainTileDataset, DensityBasedSampler, RandomTileSampler
-from utils import visualize_batch, calculate_statistics
+from utils import calculate_statistics, collate_fn
 import torch
 from torch.utils.data import DataLoader
+import h5py
+
+torch.set_float32_matmul_precision('medium') # Use float32 matrix multiplication for better performance
 
 def main():
-    parser = argparse.ArgumentParser(description='Train a model with specified test set.')
+    parser = argparse.ArgumentParser(description="Train a Variational Autoencoder")
+    parser.add_argument("--img_channels", type=int, default=1)
+    parser.add_argument("--feature_dim", type=int, default=128)
+    parser.add_argument("--latent_dim", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--learning_rate", type=float, default=0.001)
+    parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument('--test_set', type=str, choices=['B01', 'B02', 'B05', 'B07', 'B20'], default='B20', help='Test set to use')
     parser.add_argument('--data_path', type=str, default='cell_data.h5', help='Path to the HDF5 dataset')
     parser.add_argument('--tile_size', type=int, default=64, help='Size of the tiles to extract')
@@ -29,30 +41,48 @@ def main():
     # Create dataloaders
     train_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'])
     density_sampler = DensityBasedSampler(train_dataset, samples_per_epoch=1024)
-    random_sampler = RandomTileSampler(train_dataset, samples_per_epoch=1024)
+    # random_sampler = RandomTileSampler(train_dataset, samples_per_epoch=1024)
     
     density_dataloader = DataLoader(
         train_dataset,
         batch_size=8,
         sampler=density_sampler,
-        collate_fn=lambda x: torch.stack([item for item in x])
+        num_workers=4,
+        collate_fn=collate_fn,
+        pin_memory=True,
+        persistent_workers=True
     )
 
-    random_dataloader = DataLoader(
-        train_dataset,
-        batch_size=8,
-        sampler=random_sampler,
-        collate_fn=lambda x: torch.stack([item for item in x])
-    )
-    
-    # Visualize first batch of training data
-    for batch in density_dataloader:
-        visualize_batch(batch, **kwargs)
-        break
+    # random_dataloader = DataLoader(
+    #     train_dataset,
+    #     batch_size=8,
+    #     sampler=random_sampler,
+    #     collate_fn=lambda x: torch.stack([item for item in x])
+    # )
 
-    for batch in random_dataloader:
-        visualize_batch(batch, **kwargs)
-        break
+    model = VAE(
+        in_channels=kwargs['img_channels'],
+        out_channels=kwargs['img_channels'],  # Assuming out_channels is the same as img_channels
+        latent_dim=kwargs['latent_dim'],
+        img_size=kwargs['tile_size'],
+        beta=4,  # Default value
+        gamma=1000,  # Default value
+        max_capacity=25,  # Default value
+        Capacity_max_iter=1e5,  # Default value
+        loss_type='H',  # Default value
+        hidden_dims=None  # Default value, you can change this if needed
+    )
+
+    checkpoint_callback = ModelCheckpoint(monitor="train_loss", save_top_k=1, mode="min")
+    logger = TensorBoardLogger("tb_logs", name="vae_experiment")
+
+    trainer = Trainer(
+        max_epochs=args.max_epochs,
+        callbacks=[checkpoint_callback],
+        logger=logger,
+        accelerator="gpu" if torch.cuda.is_available() else None,
+    )
+    trainer.fit(model, density_dataloader)
 
 if __name__ == "__main__":
     main()

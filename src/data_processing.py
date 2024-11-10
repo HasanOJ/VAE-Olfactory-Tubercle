@@ -37,7 +37,7 @@ class BrainTileDataset(Dataset):
                     self.images[brain][img_key] = f[brain][img_key][()]
 
         # Define augmentations
-        self.augmentations = transforms.Compose([
+        self.transform = transforms.Compose([
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomVerticalFlip(p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(kernel_size=5)], p=0.5), # gaussian blur
@@ -75,7 +75,7 @@ class BrainTileDataset(Dataset):
         
         # Apply augmentations if not in testing mode
         if not self.testing:
-            tile_tensor = self.augmentations(tile_tensor)
+            tile_tensor = self.transform(tile_tensor)
         
         return tile_tensor
 

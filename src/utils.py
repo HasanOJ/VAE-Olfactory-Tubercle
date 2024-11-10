@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import h5py
 import json
 import os
+import torch
 
 def calculate_statistics(cache_file='statistics_cache.json', **kwargs):
     # Load cached statistics if they exist
@@ -84,3 +85,6 @@ def denormalize(tensor, global_mean, global_std):
     """
     denorm = tensor * global_std + global_mean
     return denorm
+
+def collate_fn(batch):
+    return torch.stack([item for item in batch])
