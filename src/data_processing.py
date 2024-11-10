@@ -1,161 +1,165 @@
-import json
-import os
 import numpy as np
 import h5py
 import torch
-from torch.utils.data import Dataset
+import random
+from torch.utils.data import Dataset, DataLoader, Sampler
+from typing import Dict, List, Tuple
+import matplotlib.pyplot as plt
 
-class StatisticsCalculator:
-    def __init__(self, h5_file_path='cell_data.h5', cache_file='statistics_cache.json'):
-        self.h5_file_path = h5_file_path
-        self.cache_file = cache_file
+class BrainTileDataset(Dataset):
+    """Dataset for accessing brain image tiles."""
 
-    def calculate_statistics(self, test_set):
-        # Load cached statistics if they exist
-        if os.path.exists(self.cache_file):
-            with open(self.cache_file, 'r') as f:
-                cache = json.load(f)
-                if test_set in cache:
-                    print(f"Loading cached statistics for test set {test_set}...")
-                    stats = cache[test_set]
-                    return stats["min"], stats["max"], stats["mean"], stats["std"]
-
-        # Calculate statistics if not cached
-        training_brains = ['B01', 'B02', 'B05', 'B07', 'B20']
-        training_brains.remove(test_set)
+    def __init__(self, file_path: str, global_stats: Dict[str, float], test_set: str, testing: bool = False):
+        """
+        Initialize the dataset.
         
-        all_pixels = []
-        with h5py.File(self.h5_file_path, 'r') as f:
-            for brain in training_brains:
-                for img in f[brain]:
-                    data = f[brain][img][()]
-                    all_pixels.append(data.flatten())
+        Args:
+            file_path: Path to the HDF5 file
+            global_stats: Dictionary containing 'mean' and 'std' for standardization
+            test_set: Brain ID to be used as the test set
+            testing: Boolean flag to indicate if the dataset is for testing
+        """
+        self.file_path = file_path
+        self.global_mean = global_stats['mean'] / 255.0  # Normalize to 0-1 range
+        self.global_std = global_stats['std'] / 255.0
+        self.images = {}
+        self.testing = testing
 
-        all_pixels = np.concatenate(all_pixels)
-        global_min = float(np.min(all_pixels))  # Convert to Python float for JSON compatibility
-        global_max = float(np.max(all_pixels))
-        global_mean = float(np.mean(all_pixels))
-        global_std = float(np.std(all_pixels))
-
-        # Update the cache with new statistics
-        if os.path.exists(self.cache_file):
-            with open(self.cache_file, 'r') as f:
-                cache = json.load(f)
-        else:
-            cache = {}
-
-        cache[test_set] = {
-            "min": global_min,
-            "max": global_max,
-            "mean": global_mean,
-            "std": global_std
-        }
-
-        with open(self.cache_file, 'w') as f:
-            json.dump(cache, f)
-
-        return global_min, global_max, global_mean, global_std
-
-class MicroscopyTileDataset(Dataset):
-    def __init__(self, h5_file_path, brains, global_mean, global_std, tile_size=64, preload_images=False):
-        self.h5_file_path = h5_file_path
-        self.brains = brains
-        self.global_mean = global_mean / 255.0  # Adjust mean for normalized range
-        self.global_std = global_std / 255.0    # Adjust std for normalized range
-        self.tile_size = tile_size
-        self.images = {}  # Store images in RAM if preloaded
-        if preload_images:
-            self._preload_images()
-
-    def __getitem__(self, index):
-        brain, image, row, col = index
-        tile_size = self.tile_size
-
-        if brain in self.images:
-            img = self.images[brain][image]
-        else:
-            with h5py.File(self.h5_file_path, 'r') as f:
-                img = f[brain][image][()]
-
-        tile = img[row:row+tile_size, col:col+tile_size]
-
+        # Load images into RAM
+        with h5py.File(self.file_path, 'r') as f:
+            for brain in f.keys():
+                if (testing and brain != test_set) or (not testing and brain == test_set):
+                    continue
+                self.images[brain] = {}
+                for img_key in f[brain].keys():
+                    self.images[brain][img_key] = f[brain][img_key][()]
+    
+    def __getitem__(self, index: Tuple[str, str, int, int, int]) -> torch.Tensor:
+        """
+        Extract a tile from the specified location.
+        
+        Args:
+            index: Tuple of (brain, image_key, row, col, tile_size)
+        
+        Returns:
+            Standardized tile as torch tensor with shape (1, tile_size, tile_size)
+        """
+        brain, image_key, row, col, tile_size = index
+        
+        # Load image data from RAM
+        image_data = self.images[brain][image_key]
+        tile = image_data[row:row + tile_size, col:col + tile_size]
+        
+        # Handle padding if needed
         if tile.shape != (tile_size, tile_size):
-            tile = np.pad(tile, ((0, max(0, tile_size - tile.shape[0])),
-                                 (0, max(0, tile_size - tile.shape[1]))),
-                          mode='constant')
-
-        # Convert tile to float32 and normalize from 0-255 to 0-1
-        tile_tensor = torch.tensor(tile, dtype=torch.float32).unsqueeze(0) / 255.0
-        # Standardize using global mean and std
+            padded_tile = np.zeros((tile_size, tile_size))
+            padded_tile[:tile.shape[0], :tile.shape[1]] = tile
+            tile = padded_tile
+        
+        # Convert to torch tensor, add channel dimension, normalize to 0-1 range, and standardize
+        tile_tensor = torch.from_numpy(tile).float().unsqueeze(0) / 255.0
         tile_tensor = (tile_tensor - self.global_mean) / self.global_std
-
+        
         return tile_tensor
 
-    def __len__(self):
-        # Define length as number of images * possible tile positions, or use a fixed count for epochs
-        return 100  # Example, adjust based on requirements
+    def __len__(self) -> int:
+        """Return total number of possible tiles across all images."""
+        return sum(len(brain_images) for brain_images in self.images.values())
 
-import random
-from torch.utils.data import Sampler
 
 class RandomTileSampler(Sampler):
-    def __init__(self, h5_file_path, brains, tile_size=64, num_samples=1000):
-        self.h5_file_path = h5_file_path
-        self.brains = brains
-        self.tile_size = tile_size
-        self.num_samples = num_samples
-        self.image_shapes = {}
+    """Sampler for randomly selecting tile locations."""
 
-        # Load the shapes of each image
-        with h5py.File(self.h5_file_path, 'r') as f:
-            for brain in self.brains:
-                self.image_shapes[brain] = {img: f[brain][img].shape for img in f[brain]}
+    def __init__(self, dataset: BrainTileDataset, 
+                 samples_per_epoch: int, tile_size: int):
+        """
+        Initialize the sampler.
+        
+        Args:
+            dataset: BrainTileDataset instance
+            train_brains: List of brain IDs to sample from
+            samples_per_epoch: Number of tiles to sample per epoch
+            tile_size: Size of tiles to extract
+        """
+        self.dataset = dataset
+        self.train_brains = list(dataset.images.keys())
+        self.samples_per_epoch = samples_per_epoch
+        self.tile_size = tile_size
+        
+        # Pre-calculate valid tile positions for each image
+        self.valid_positions = self._calculate_valid_positions()
+
+    def _calculate_valid_positions(self) -> Dict:
+        """Calculate valid tile positions for each image."""
+        positions = {}
+        for brain in self.train_brains:
+            positions[brain] = {}
+            for img_key in self.dataset.images[brain].keys():
+                shape = self.dataset.images[brain][img_key].shape
+                max_row = max(0, shape[0] - self.tile_size)
+                max_col = max(0, shape[1] - self.tile_size)
+                positions[brain][img_key] = (max_row, max_col)
+        return positions
 
     def __iter__(self):
-        for _ in range(self.num_samples):
-            brain = random.choice(self.brains)
-            image = random.choice(list(self.image_shapes[brain].keys()))
-            img_shape = self.image_shapes[brain][image]
+        """Yield random tile locations."""
+        for _ in range(self.samples_per_epoch):
+            # Randomly select brain and image
+            brain = random.choice(self.train_brains)
+            image_key = random.choice(list(self.valid_positions[brain].keys()))
             
-            # Randomly select a row and column within bounds
-            row = random.randint(0, img_shape[0] - self.tile_size)
-            col = random.randint(0, img_shape[1] - self.tile_size)
+            # Get valid position ranges
+            max_row, max_col = self.valid_positions[brain][image_key]
             
-            yield (brain, image, row, col)
+            # Sample random position
+            row = random.randint(0, max_row)
+            col = random.randint(0, max_col)
+            
+            yield (brain, image_key, row, col, self.tile_size)
 
-    def __len__(self):
-        return self.num_samples  # Defines the number of samples per epoch
+    def __len__(self) -> int:
+        """Return number of samples per epoch."""
+        return self.samples_per_epoch
 
 
-# from torch.utils.data import DataLoader
-
-# # Instantiate the dataset and sampler
-# dataset = MicroscopyTileDataset(h5_file_path='cell_data.h5',
-#                                 brains=['B01', 'B02'],  # Example brains
-#                                 global_mean=global_mean,
-#                                 global_std=global_std,
-#                                 tile_size=64,
-#                                 preload_images=True)
-
-# sampler = RandomTileSampler(h5_file_path='cell_data.h5',
-#                             brains=['B01', 'B02'],
-#                             tile_size=64,
-#                             num_samples=1000)
-
-# # Create DataLoader
-# dataloader = DataLoader(dataset, batch_size=8, sampler=sampler)
-
-# # Visualize a batch
-# import matplotlib.pyplot as plt
-
-# def visualize_batch(batch):
-#     grid = plt.figure(figsize=(10, 10))
-#     for i in range(len(batch)):
-#         ax = grid.add_subplot(4, 4, i+1, xticks=[], yticks=[])
-#         img = batch[i].squeeze(0) * global_std + global_mean  # Scale back for visualization
-#         ax.imshow(img, cmap='gray')
-
-# # Load a batch and visualize
-# batch = next(iter(dataloader))
-# visualize_batch(batch)
-# plt.show()
+def create_dataloader(file_path: str, global_stats: Dict[str, float], 
+                     tile_size: int = 64, batch_size: int = 8,
+                        samples_per_epoch: int = 1024, **kwargs):
+    """
+    Create DataLoaders for training and testing.
+    
+    Args:
+        file_path: Path to HDF5 file
+        global_stats: Dictionary with global statistics
+        test_set: Brain ID for testing
+        tile_size: Size of tiles to extract
+        batch_size: Number of tiles per batch
+        samples_per_epoch: Number of tiles to sample per epoch
+    """
+    # Create training dataset
+    train_dataset = BrainTileDataset(file_path, global_stats, test_set=kwargs['test_set'])
+    
+    # Create testing dataset
+    # test_dataset = BrainTileDataset(file_path, global_stats, test_set=test_set, testing=True)
+    
+    # Create training sampler
+    train_sampler = RandomTileSampler(train_dataset, samples_per_epoch, tile_size)
+    
+    # Create training data loader
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        sampler=train_sampler,
+        collate_fn=lambda x: torch.stack([item for item in x])
+    )
+    
+    # Create testing data loader without a sampler
+    # test_dataloader = DataLoader(
+    #     test_dataset,
+    #     batch_size=batch_size,
+    #     shuffle=False,  # No need for a sampler, use sequential access
+    #     collate_fn=lambda x: torch.stack([item for item in x])
+    # )
+    
+    # return train_dataloader, test_dataloader, train_dataset, test_dataset
+    return train_dataloader, train_dataset
