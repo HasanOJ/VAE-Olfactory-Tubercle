@@ -38,11 +38,12 @@ class BrainTileDataset(Dataset):
 
         # Define augmentations
         self.augmentations = transforms.Compose([
-            transforms.RandomApply([transforms.RandomHorizontalFlip()], p=0.5),
-            transforms.RandomApply([transforms.RandomVerticalFlip()], p=0.5),
-            transforms.RandomApply([transforms.RandomResizedCrop(size=tile_size, scale=(0.9, 1.0))], p=0.5),
-            transforms.RandomApply([transforms.ColorJitter(brightness=0.1, contrast=0.1)], p=0.5),
-            transforms.RandomApply([transforms.Lambda(lambda x: x + torch.randn_like(x) * 0.1)], p=0.5),  # Gaussian noise
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomApply([transforms.GaussianBlur(kernel_size=5)], p=0.5), # gaussian blur
+            # transforms.RandomApply([transforms.RandomResizedCrop(size=tile_size, scale=(0.9, 1.0))], p=0.5),
+            # transforms.RandomApply([transforms.ColorJitter(brightness=0.05, contrast=0.05)], p=0.5),
+            # transforms.RandomApply([transforms.Lambda(lambda x: x + torch.randn_like(x) * 0.05)], p=0.5),  # Gaussian noise
         ])
 
     
