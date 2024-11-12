@@ -9,7 +9,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train a model with specified test set.')
     parser.add_argument('--test_set', type=str, choices=['B01', 'B02', 'B05', 'B07', 'B20'], default='B20', help='Test set to use')
     parser.add_argument('--data_path', type=str, default='cell_data.h5', help='Path to the HDF5 dataset')
-    parser.add_argument('--tile_size', type=int, default=64, help='Size of the tiles to extract')
+    parser.add_argument('--tile_size', type=int, default=128, help='Size of the tiles to extract')
     args = parser.parse_args()
 
     kwargs = vars(args)
