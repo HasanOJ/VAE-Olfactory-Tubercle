@@ -22,7 +22,7 @@ def main():
         raise ValueError(f"Test set {kwargs['test_set']} not found in HDF5 file.")
     
     # Calculate global statistics
-    global_stats = calculate_statistics(**kwargs)
+    global_stats = calculate_statistics(kwargs['data_path'], kwargs['test_set'])
     kwargs['global_mean'] = global_stats['mean']
     kwargs['global_std'] = global_stats['std']
 
@@ -47,11 +47,11 @@ def main():
     
     # Visualize first batch of training data
     for batch in density_dataloader:
-        visualize_batch(batch, **kwargs)
+        visualize_batch(batch, global_stats)
         break
 
     for batch in random_dataloader:
-        visualize_batch(batch, **kwargs)
+        visualize_batch(batch, global_stats)
         break
 
 if __name__ == "__main__":

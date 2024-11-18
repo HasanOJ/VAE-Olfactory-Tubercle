@@ -1,6 +1,6 @@
 import argparse
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
 from model import VAE
 from data_processing import BrainTileDataset, DensityBasedSampler, RandomTileSampler
@@ -21,7 +21,8 @@ def main():
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument('--test_set', type=str, choices=['B01', 'B02', 'B05', 'B07', 'B20'], default='B20', help='Test set to use')
     parser.add_argument('--data_path', type=str, default='cell_data.h5', help='Path to the HDF5 dataset')
-    parser.add_argument('--tile_size', type=int, default=64, help='Size of the tiles to extract')
+    parser.add_argument("--samples_per_epoch", type=int, default=1024, help="Number of samples per epoch")
+    parser.add_argument('--tile_size', type=int, default=256, help='Size of the tiles to extract')
     args = parser.parse_args()
 
     kwargs = vars(args)
@@ -34,23 +35,35 @@ def main():
         raise ValueError(f"Test set {kwargs['test_set']} not found in HDF5 file.")
     
     # Calculate global statistics
-    global_stats = calculate_statistics(**kwargs)
+    global_stats = calculate_statistics(kwargs['data_path'], kwargs['test_set'])
     kwargs['global_mean'] = global_stats['mean']
     kwargs['global_std'] = global_stats['std']
 
     # Create dataloaders
     train_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'])
-    density_sampler = DensityBasedSampler(train_dataset, samples_per_epoch=1024)
-    # random_sampler = RandomTileSampler(train_dataset, samples_per_epoch=1024)
+    test_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'], testing=True)
+    density_sampler = DensityBasedSampler(train_dataset, samples_per_epoch=kwargs['samples_per_epoch'])
+    random_sampler = RandomTileSampler(test_dataset, samples_per_epoch=kwargs['samples_per_epoch'])
     
     density_dataloader = DataLoader(
         train_dataset,
-        batch_size=8,
+        batch_size=kwargs['batch_size'],
         sampler=density_sampler,
         num_workers=4,
         collate_fn=collate_fn,
         pin_memory=True,
         persistent_workers=True
+    )
+
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=kwargs['batch_size'],
+        sampler=random_sampler,
+        shuffle=False,
+        num_workers=4,
+        collate_fn=collate_fn,
+        pin_memory=True,
+        persistent_workers=True 
     )
 
     # random_dataloader = DataLoader(
@@ -73,16 +86,38 @@ def main():
         hidden_dims=None  # Default value, you can change this if needed
     )
 
-    checkpoint_callback = ModelCheckpoint(monitor="train_loss", save_top_k=1, mode="min")
     logger = TensorBoardLogger("tb_logs", name="vae_experiment")
 
+    # Define Model Checkpointing and Early Stopping callbacks
+    checkpoint_callback = ModelCheckpoint(
+        monitor='val_loss',
+        dirpath='checkpoints/',
+        filename=f'best-checkpoint-{kwargs["test_set"]}-{kwargs["latent_dim"]}',
+        save_top_k=1,
+        mode='min',
+        enable_version_counter=False
+    )
+
+    early_stopping_callback = EarlyStopping(
+        monitor='val_loss',
+        # monitor='train_loss',
+        patience=5,  # Stop training if val_loss doesn't improve for 5 epochs
+        mode='min'
+    )
+
+    lr_monitor = LearningRateMonitor(logging_interval='epoch')
+
     trainer = Trainer(
-        max_epochs=args.max_epochs,
-        callbacks=[checkpoint_callback],
+        max_epochs=kwargs['max_epochs'],
         logger=logger,
         accelerator="gpu" if torch.cuda.is_available() else None,
+        callbacks=[checkpoint_callback, early_stopping_callback, lr_monitor],
     )
-    trainer.fit(model, density_dataloader)
+    trainer.fit(model, density_dataloader, test_dataloader)
+
+    # Load the best checkpoint and initialize the model with saved weights
+    # best_model_path = checkpoint_callback.best_model_path
+    # trained_model = VAE.load_from_checkpoint(best_model_path)
 
 if __name__ == "__main__":
     main()

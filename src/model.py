@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Encoder(nn.Module):
     def __init__(self, in_channels: int, latent_dim: int, hidden_dims: list = None):
@@ -66,9 +67,9 @@ class Decoder(nn.Module):
         return x
 
 class VAE(pl.LightningModule):
-    def __init__(self, in_channels: int, out_channels: int, latent_dim: int, 
+    def __init__(self, in_channels: int = 1, out_channels: int = 1, latent_dim: int = 128, 
                  beta: float = 4, gamma: float = 1000, max_capacity: int = 25, 
-                 Capacity_max_iter: int = 1e5, loss_type: str = 'B', hidden_dims: list = None, 
+                 Capacity_max_iter: int = 1e5, loss_type: str = 'H', hidden_dims: list = None, 
                  learning_rate: float = 1e-3, img_size: int = 64):
         super(VAE, self).__init__()
         self.encoder = Encoder(in_channels, latent_dim, hidden_dims)
@@ -124,7 +125,9 @@ class VAE(pl.LightningModule):
         return losses['loss']
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        scheduler = CosineAnnealingLR(optimizer, T_max=10)
+        return [optimizer], [scheduler]
 
     def sample(self, num_samples: int, device: torch.device):
         z = torch.randn(num_samples, self.latent_dim).to(device)

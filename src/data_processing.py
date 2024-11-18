@@ -21,8 +21,8 @@ class BrainTileDataset(Dataset):
             tile_size: Size of the tiles to extract
         """
         self.file_path = file_path
-        self.global_mean = global_stats['mean'] / 255.0  # Normalize to 0-1 range
-        self.global_std = global_stats['std'] / 255.0
+        self.global_mean = global_stats['mean']
+        self.global_std = global_stats['std']
         self.images = {}
         self.testing = testing
         self.tile_size = tile_size
@@ -34,7 +34,7 @@ class BrainTileDataset(Dataset):
                     continue
                 self.images[brain] = {}
                 for img_key in f[brain].keys():
-                    self.images[brain][img_key] = f[brain][img_key][()]
+                    self.images[brain][img_key] = f[brain][img_key][()] / 255.0
 
         # Define augmentations
         self.transform = transforms.Compose([
@@ -47,37 +47,47 @@ class BrainTileDataset(Dataset):
         ])
 
     
-    def __getitem__(self, index: Tuple[str, str, int, int, int]) -> torch.Tensor:
+    def __getitem__(self, index) -> torch.Tensor:
         """
-        Extract a tile from the specified location.
+        Extract a tile from the specified location or return the entire image.
         
         Args:
-            index: Tuple of (brain, image_key, row, col, tile_size)
+            index: Tuple of (brain, image_key) or (brain, image_key, row, col, tile_size)
         
         Returns:
-            Standardized tile as torch tensor with shape (1, tile_size, tile_size)
+            Standardized tile or image as torch tensor
         """
-        brain, image_key, row, col, tile_size = index
-        
-        # Load image data from RAM
-        image_data = self.images[brain][image_key]
-        tile = image_data[row:row + tile_size, col:col + tile_size]
-        
-        # Handle padding if needed
-        if tile.shape != (tile_size, tile_size):
-            padded_tile = np.zeros((tile_size, tile_size))
-            padded_tile[:tile.shape[0], :tile.shape[1]] = tile
-            tile = padded_tile
-        
-        # Convert to torch tensor, add channel dimension, normalize to 0-1 range, and standardize
-        tile_tensor = torch.from_numpy(tile).float().unsqueeze(0) / 255.0
-        tile_tensor = (tile_tensor - self.global_mean) / self.global_std
-        
-        # Apply augmentations if not in testing mode
-        if not self.testing:
-            tile_tensor = self.transform(tile_tensor)
-        
-        return tile_tensor
+        if len(index) == 2:
+            brain, idx = index
+            image_key = list(self.images[brain].keys())[idx]
+            image_data = self.images[brain][image_key]
+            image_tensor = torch.from_numpy(image_data).float().unsqueeze(0)
+            image_tensor = (image_tensor - self.global_mean) / self.global_std
+            return image_tensor
+        elif len(index) == 5:
+            brain, image_key, row, col, tile_size = index
+            
+            # Load image data from RAM
+            image_data = self.images[brain][image_key]
+            tile = image_data[row:row + tile_size, col:col + tile_size]
+            
+            # Handle padding if needed
+            if tile.shape != (tile_size, tile_size):
+                padded_tile = np.zeros((tile_size, tile_size))
+                padded_tile[:tile.shape[0], :tile.shape[1]] = tile
+                tile = padded_tile
+            
+            # Convert to torch tensor, add channel dimension, normalize to 0-1 range, and standardize
+            tile_tensor = torch.from_numpy(tile).float().unsqueeze(0)
+            tile_tensor = (tile_tensor - self.global_mean) / self.global_std
+            
+            # Apply augmentations if not in testing mode
+            if not self.testing:
+                tile_tensor = self.transform(tile_tensor)
+            
+            return tile_tensor
+        else:
+            raise ValueError("Index must be a tuple of (brain, image_key) or (brain, image_key, row, col, tile_size)")
 
     def __len__(self) -> int:
         """Return total number of possible tiles across all images."""
@@ -182,9 +192,10 @@ class DensityBasedSampler(Sampler):
             densities[brain] = {}
             for img_key in self.dataset.images[brain].keys():
                 image_data = self.dataset.images[brain][img_key]
-                density = image_data.mean() / 255.0  # Normalize to 0-1 range
+                density = image_data.mean()
                 # Invert densities to prioritize darker tiles
                 densities[brain][img_key] = 1.0 / density
+                # densities[brain][img_key] = 1.0 - density
         return densities
 
     def __iter__(self):
@@ -207,45 +218,3 @@ class DensityBasedSampler(Sampler):
     def __len__(self):
         """Return the number of samples."""
         return self.samples_per_epoch
-
-
-def create_dataloader(file_path: str, global_stats: Dict[str, float], 
-                      batch_size: int = 8, samples_per_epoch: int = 1024, **kwargs):
-    """
-    Create DataLoaders for training and testing.
-    
-    Args:
-        file_path: Path to HDF5 file
-        global_stats: Dictionary with global statistics
-        test_set: Brain ID for testing
-        tile_size: Size of tiles to extract
-        batch_size: Number of tiles per batch
-        samples_per_epoch: Number of tiles to sample per epoch
-    """
-    # Create training dataset
-    train_dataset = BrainTileDataset(file_path, global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'])
-    
-    # Create testing dataset
-    # test_dataset = BrainTileDataset(file_path, global_stats, test_set=test_set, testing=True)
-    
-    # Create training sampler
-    train_sampler = RandomTileSampler(train_dataset, samples_per_epoch, kwargs['tile_size'])
-    
-    # Create training data loader
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        sampler=train_sampler,
-        collate_fn=lambda x: torch.stack([item for item in x])
-    )
-    
-    # Create testing data loader without a sampler
-    # test_dataloader = DataLoader(
-    #     test_dataset,
-    #     batch_size=batch_size,
-    #     shuffle=False,  # No need for a sampler, use sequential access
-    #     collate_fn=lambda x: torch.stack([item for item in x])
-    # )
-    
-    # return train_dataloader, test_dataloader, train_dataset, test_dataset
-    return train_dataloader, train_dataset
