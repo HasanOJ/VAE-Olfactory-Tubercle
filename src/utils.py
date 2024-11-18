@@ -49,13 +49,14 @@ def calculate_statistics(data_path='cell_data.h5', test_set='B20', cache_file='s
 
     return cache[test_set]
 
-def visualize_batch(batch, global_stats):
+def visualize_batch(batch, metadata, global_stats):
     """
-    Visualize a batch of tiles.
+    Visualize a batch of tiles with metadata.
     
     Args:
         batch: Tensor of shape (batch_size, 1, tile_size, tile_size)
-        dataset: BrainTileDataset instance
+        metadata: List of tuples (brain, image_key, tile_row, tile_col)
+        global_stats: Dictionary containing 'mean' and 'std' for denormalization
     """
     batch_size = batch.shape[0]
     n_rows = int(np.ceil(np.sqrt(batch_size)))
@@ -70,6 +71,8 @@ def visualize_batch(batch, global_stats):
     for i in range(batch_size):
         axes[i].imshow(denorm_batch[i, 0].numpy(), cmap='gray')
         axes[i].axis('off')
+        brain, image_key, tile_row, tile_col = metadata[0][i], metadata[1][i], metadata[2][i].item(), metadata[3][i].item()
+        axes[i].set_title(f"{brain}-{image_key}\n({tile_row}, {tile_col})", fontsize=8)
         
     # Hide empty subplots
     for i in range(batch_size, len(axes)):
@@ -86,16 +89,23 @@ def denormalize(tensor, global_mean, global_std):
     return denorm
 
 def collate_fn(batch):
-    return torch.stack([item for item in batch])
+    data = torch.stack([item[0] for item in batch])
+    metadata = [item[1] for item in batch]
+    return data, metadata
 
-def visualize_reconstruction(batch, reconstructed):
+def visualize_reconstruction(batch, reconstructed, metadata):
     fig, axes = plt.subplots(2, 8, figsize=(15, 4))
     for i in range(8):
         # Original
-        axes[0, i].imshow(batch[i].squeeze(0), cmap='gray')
+        axes[0, i].imshow(batch[i].squeeze(0).cpu().numpy(), cmap='gray')
         axes[0, i].axis('off')
+        brain, image_key, tile_row, tile_col = metadata[0][i], metadata[1][i], metadata[2][i].item(), metadata[3][i].item()
+        axes[0, i].set_title(f"{brain}-{image_key}\n({tile_row}, {tile_col})", fontsize=8)
         
         # Reconstructed
-        recon_img = reconstructed[i].squeeze(0).detach().cpu()
+        recon_img = reconstructed[i].squeeze(0).detach().cpu().numpy()
         axes[1, i].imshow(recon_img, cmap='gray')
         axes[1, i].axis('off')
+    
+    plt.tight_layout()
+    plt.show()

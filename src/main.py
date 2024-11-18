@@ -1,6 +1,6 @@
 import argparse
 import h5py
-from data_processing import BrainTileDataset, DensityBasedSampler, RandomTileSampler
+from data_processing import BrainTileDataset, DensityBasedSampler
 from utils import visualize_batch, calculate_statistics
 import torch
 from torch.utils.data import DataLoader
@@ -27,31 +27,31 @@ def main():
     kwargs['global_std'] = global_stats['std']
 
     # Create dataloaders
-    train_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'])
+    train_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], 
+                                     tile_size=kwargs['tile_size'], metadata=True)
     density_sampler = DensityBasedSampler(train_dataset, samples_per_epoch=1024)
-    random_sampler = RandomTileSampler(train_dataset, samples_per_epoch=1024)
+    random_sampler = DensityBasedSampler(train_dataset, samples_per_epoch=1024, density=False)
     
     density_dataloader = DataLoader(
         train_dataset,
         batch_size=8,
         sampler=density_sampler,
-        collate_fn=lambda x: torch.stack([item for item in x])
     )
 
     random_dataloader = DataLoader(
         train_dataset,
         batch_size=8,
         sampler=random_sampler,
-        collate_fn=lambda x: torch.stack([item for item in x])
     )
     
     # Visualize first batch of training data
-    for batch in density_dataloader:
-        visualize_batch(batch, global_stats)
+    for batch, metadata in density_dataloader:
+        visualize_batch(batch, metadata, global_stats)
         break
 
-    for batch in random_dataloader:
-        visualize_batch(batch, global_stats)
+    # Visualize first batch of test data
+    for batch, metadata in random_dataloader:
+        visualize_batch(batch, metadata, global_stats)
         break
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
 from model import VAE
-from data_processing import BrainTileDataset, DensityBasedSampler, RandomTileSampler
-from utils import calculate_statistics, collate_fn
+from data_processing import BrainTileDataset, DensityBasedSampler
+from utils import calculate_statistics
 import torch
 from torch.utils.data import DataLoader
 import h5py
@@ -43,14 +43,13 @@ def main():
     train_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'])
     test_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'], testing=True)
     density_sampler = DensityBasedSampler(train_dataset, samples_per_epoch=kwargs['samples_per_epoch'])
-    random_sampler = RandomTileSampler(test_dataset, samples_per_epoch=kwargs['samples_per_epoch'])
+    random_sampler = DensityBasedSampler(test_dataset, samples_per_epoch=kwargs['samples_per_epoch'], density=False)
     
     density_dataloader = DataLoader(
         train_dataset,
         batch_size=kwargs['batch_size'],
         sampler=density_sampler,
-        num_workers=4,
-        collate_fn=collate_fn,
+        num_workers=4, # Set to 0 if you're using Windows OS to avoid issues with multiprocessing
         pin_memory=True,
         persistent_workers=True
     )
@@ -61,17 +60,9 @@ def main():
         sampler=random_sampler,
         shuffle=False,
         num_workers=4,
-        collate_fn=collate_fn,
         pin_memory=True,
         persistent_workers=True 
     )
-
-    # random_dataloader = DataLoader(
-    #     train_dataset,
-    #     batch_size=8,
-    #     sampler=random_sampler,
-    #     collate_fn=lambda x: torch.stack([item for item in x])
-    # )
 
     model = VAE(
         in_channels=kwargs['img_channels'],
@@ -100,7 +91,6 @@ def main():
 
     early_stopping_callback = EarlyStopping(
         monitor='val_loss',
-        # monitor='train_loss',
         patience=5,  # Stop training if val_loss doesn't improve for 5 epochs
         mode='min'
     )
@@ -110,8 +100,10 @@ def main():
     trainer = Trainer(
         max_epochs=kwargs['max_epochs'],
         logger=logger,
-        accelerator="gpu" if torch.cuda.is_available() else None,
+        accelerator="gpu" if torch.cuda.is_available() else "auto",
+        devices=1 if torch.cuda.is_available() else "auto",
         callbacks=[checkpoint_callback, early_stopping_callback, lr_monitor],
+        precision=16 if torch.cuda.is_available() else 32,
     )
     trainer.fit(model, density_dataloader, test_dataloader)
 

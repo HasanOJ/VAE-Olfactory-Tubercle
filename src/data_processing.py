@@ -2,14 +2,15 @@ import numpy as np
 import h5py
 import torch
 import random
-from torch.utils.data import Dataset, DataLoader, Sampler
+from torch.utils.data import Dataset, Sampler
 from typing import Dict, List, Tuple
 from torchvision import transforms
+import pandas as pd
 
 class BrainTileDataset(Dataset):
     """Dataset for accessing brain image tiles."""
 
-    def __init__(self, file_path: str, global_stats: Dict[str, float], test_set: str, testing: bool = False, tile_size: int = 64):
+    def __init__(self, file_path: str, global_stats: Dict[str, float], test_set: str, testing: bool = False, tile_size: int = 64, metadata: bool = False):
         """
         Initialize the dataset.
         
@@ -26,6 +27,7 @@ class BrainTileDataset(Dataset):
         self.images = {}
         self.testing = testing
         self.tile_size = tile_size
+        self.metadata = metadata
 
         # Load images into RAM
         with h5py.File(self.file_path, 'r') as f:
@@ -34,7 +36,10 @@ class BrainTileDataset(Dataset):
                     continue
                 self.images[brain] = {}
                 for img_key in f[brain].keys():
-                    self.images[brain][img_key] = f[brain][img_key][()] / 255.0
+                    self.images[brain][img_key] = torch.from_numpy(f[brain][img_key][()] / 255.0).float()
+            self.images = pd.DataFrame([(brain, img_key, img_data) for brain, imgs in self.images.items() for img_key, img_data in imgs.items()],
+                                       columns=['brain', 'image_key', 'image_data'])
+                    
 
         # Define augmentations
         self.transform = transforms.Compose([
@@ -57,18 +62,16 @@ class BrainTileDataset(Dataset):
         Returns:
             Standardized tile or image as torch tensor
         """
-        if len(index) == 2:
-            brain, idx = index
-            image_key = list(self.images[brain].keys())[idx]
-            image_data = self.images[brain][image_key]
-            image_tensor = torch.from_numpy(image_data).float().unsqueeze(0)
+        if len(index) == 1:
+            brain = self.images.loc[index, 'brain']
+            image_tensor = self.images.loc[index, 'image_data']
             image_tensor = (image_tensor - self.global_mean) / self.global_std
-            return image_tensor
+            return image_tensor, brain
         elif len(index) == 5:
             brain, image_key, row, col, tile_size = index
             
             # Load image data from RAM
-            image_data = self.images[brain][image_key]
+            image_data = self.images.loc[(self.images['brain'] == brain) & (self.images['image_key'] == image_key), 'image_data'].values[0]
             tile = image_data[row:row + tile_size, col:col + tile_size]
             
             # Handle padding if needed
@@ -78,93 +81,44 @@ class BrainTileDataset(Dataset):
                 tile = padded_tile
             
             # Convert to torch tensor, add channel dimension, normalize to 0-1 range, and standardize
-            tile_tensor = torch.from_numpy(tile).float().unsqueeze(0)
+            tile_tensor = tile.unsqueeze(0)
             tile_tensor = (tile_tensor - self.global_mean) / self.global_std
             
             # Apply augmentations if not in testing mode
             if not self.testing:
                 tile_tensor = self.transform(tile_tensor)
             
+            if self.metadata:
+                return tile_tensor, (brain, image_key, row, col)
             return tile_tensor
         else:
             raise ValueError("Index must be a tuple of (brain, image_key) or (brain, image_key, row, col, tile_size)")
 
     def __len__(self) -> int:
         """Return total number of possible tiles across all images."""
-        return sum(len(brain_images) for brain_images in self.images.values())
-
-
-class RandomTileSampler(Sampler):
-    """Sampler for randomly selecting tile locations."""
-
-    def __init__(self, dataset: BrainTileDataset, 
-                 samples_per_epoch: int):
-        """
-        Initialize the sampler.
-        
-        Args:
-            dataset: BrainTileDataset instance
-            train_brains: List of brain IDs to sample from
-            samples_per_epoch: Number of tiles to sample per epoch
-            tile_size: Size of tiles to extract
-        """
-        self.dataset = dataset
-        self.train_brains = list(dataset.images.keys())
-        self.samples_per_epoch = samples_per_epoch
-        self.tile_size = dataset.tile_size
-        
-        # Pre-calculate valid tile positions for each image
-        self.valid_positions = self._calculate_valid_positions()
-
-    def _calculate_valid_positions(self) -> Dict:
-        """Calculate valid tile positions for each image."""
-        positions = {}
-        for brain in self.train_brains:
-            positions[brain] = {}
-            for img_key in self.dataset.images[brain].keys():
-                shape = self.dataset.images[brain][img_key].shape
-                max_row = max(0, shape[0] - self.tile_size)
-                max_col = max(0, shape[1] - self.tile_size)
-                positions[brain][img_key] = (max_row, max_col)
-        return positions
-
-    def __iter__(self):
-        """Yield random tile locations."""
-        for _ in range(self.samples_per_epoch):
-            # Randomly select brain and image
-            brain = random.choice(self.train_brains)
-            image_key = random.choice(list(self.valid_positions[brain].keys()))
-            
-            # Get valid position ranges
-            max_row, max_col = self.valid_positions[brain][image_key]
-            
-            # Sample random position
-            row = random.randint(0, max_row)
-            col = random.randint(0, max_col)
-            
-            yield (brain, image_key, row, col, self.tile_size)
-
-    def __len__(self) -> int:
-        """Return number of samples per epoch."""
-        return self.samples_per_epoch
+        return len(self.images)
 
 
 class DensityBasedSampler(Sampler):
     """Sampler for density-based sampling of tiles."""
 
-    def __init__(self, dataset: BrainTileDataset, samples_per_epoch: int):
+    def __init__(self, dataset: BrainTileDataset, samples_per_epoch: int, inverse_density: bool = False, density: bool = True):
         """
         Initialize the sampler.
         
         Args:
             dataset: BrainTileDataset instance
             num_samples: Number of samples to draw per epoch
+            inverse_density: Boolean flag to use inverse density for sampling
+            density: Boolean flag to use density-based sampling or random sampling
         """
         self.dataset = dataset
         self.samples_per_epoch = samples_per_epoch
         self.tile_size = dataset.tile_size
-        self.train_brains = list(dataset.images.keys())
-        self.weights = self.calculate_tile_densities()
+        self.train_brains = dataset.images['brain'].unique()
+        self.density = density
+        if self.density:
+            self.weights = self.calculate_tile_densities(inverse_density)
 
         # Invert densities to prioritize darker tiles
         # self.weights = np.array([1.0 / density for density in self.weights.values()])
@@ -175,43 +129,30 @@ class DensityBasedSampler(Sampler):
 
     def _calculate_valid_positions(self) -> Dict:
         """Calculate valid tile positions for each image."""
-        positions = {}
-        for brain in self.train_brains:
-            positions[brain] = {}
-            for img_key in self.dataset.images[brain].keys():
-                shape = self.dataset.images[brain][img_key].shape
-                max_row = max(0, shape[0] - self.tile_size)
-                max_col = max(0, shape[1] - self.tile_size)
-                positions[brain][img_key] = (max_row, max_col)
-        return positions
+        return self.dataset.images['image_data'].apply(lambda x: (max(0, x.shape[0] - self.tile_size), max(0, x.shape[1] - self.tile_size)))
 
-    def calculate_tile_densities(self) -> Dict[Tuple[str, str, int, int], float]:
+    def calculate_tile_densities(self, inverse_density: bool = False) -> Dict:
         """Calculate the average pixel intensity for each image."""
-        densities = {}
-        for brain in self.dataset.images.keys():
-            densities[brain] = {}
-            for img_key in self.dataset.images[brain].keys():
-                image_data = self.dataset.images[brain][img_key]
-                density = image_data.mean()
-                # Invert densities to prioritize darker tiles
-                densities[brain][img_key] = 1.0 / density
-                # densities[brain][img_key] = 1.0 - density
-        return densities
+        densities =  self.dataset.images['image_data'].apply(lambda x: x.mean())
+        if inverse_density:
+            1.0 / densities
+        return 1.0 - densities
 
     def __iter__(self):
         """Yield random tile locations based on density."""
         for _ in range(self.samples_per_epoch):
-            # Randomly select brain and image
-            brain = random.choice(self.train_brains)
-            # select image based on density weights from brain
-            image_key = random.choices(list(self.valid_positions[brain].keys()), weights=self.weights[brain].values())[0]
-            
-            # Get valid position ranges
-            max_row, max_col = self.valid_positions[brain][image_key]
+            # Randomly select a random image index
+            if self.density:
+                index = random.choices(self.dataset.images.index, weights=self.weights)[0]
+            else:
+                index = random.choices(self.dataset.images.index)[0]
             
             # Sample random position
+            max_row, max_col = self.valid_positions[index]
             row = random.randint(0, max_row)
             col = random.randint(0, max_col)
+            brain = self.dataset.images.loc[index, 'brain']
+            image_key = self.dataset.images.loc[index, 'image_key']
             
             yield (brain, image_key, row, col, self.tile_size)
 
