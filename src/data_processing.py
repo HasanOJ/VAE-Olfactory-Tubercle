@@ -76,7 +76,7 @@ class BrainTileDataset(Dataset):
             
             # Handle padding if needed
             if tile.shape != (tile_size, tile_size):
-                padded_tile = np.zeros((tile_size, tile_size))
+                padded_tile = torch.zeros((tile_size, tile_size))
                 padded_tile[:tile.shape[0], :tile.shape[1]] = tile
                 tile = padded_tile
             
@@ -129,13 +129,15 @@ class DensityBasedSampler(Sampler):
 
     def _calculate_valid_positions(self) -> Dict:
         """Calculate valid tile positions for each image."""
-        return self.dataset.images['image_data'].apply(lambda x: (max(0, x.shape[0] - self.tile_size), max(0, x.shape[1] - self.tile_size)))
+        positions = self.dataset.images['image_data'].apply(lambda x: (max(0, x.shape[0] - self.tile_size), max(0, x.shape[1] - self.tile_size)))
+        return torch.tensor(positions.tolist(), dtype=torch.int)
 
     def calculate_tile_densities(self, inverse_density: bool = False) -> Dict:
         """Calculate the average pixel intensity for each image."""
         densities =  self.dataset.images['image_data'].apply(lambda x: x.mean())
+        densities = torch.stack(densities.to_list())
         if inverse_density:
-            1.0 / densities
+            return 1.0 / densities
         return 1.0 - densities
 
     def __iter__(self):

@@ -128,13 +128,14 @@ class VAE(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         scheduler = CosineAnnealingLR(optimizer, T_max=10)
         # Return optimizer and scheduler in the correct format for Lightning
+        # return [optimizer], [scheduler]
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': scheduler,
                 'interval': 'epoch',  # or 'step' for per-step adjustment
                 'frequency': 1,      # How often to update
-                # 'monitor': 'val_loss',  # What to monitor for early stopping
+                'monitor': 'val_loss',  # What to monitor for early stopping
                 # 'strict': True,       # Whether to crash the training if monitor is not found
                 # 'name': 'cosine_annealing_lr'
             }
