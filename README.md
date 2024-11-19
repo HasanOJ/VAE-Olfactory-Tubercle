@@ -2,6 +2,14 @@
 
 This guide explains how to run the Variational Autoencoder (VAE) training pipeline for brain tile data using Google Colab. The implementation is based on the [VAE-Olfactory-Tubercle repository](https://github.com/HasanOJ/VAE-Olfactory-Tubercle).
 
+## Quick Start
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1hVIrS2AURs5P22nzMAcilHrTJD8VFGNg?usp=sharing)
+
+1. Click the "Open in Colab" badge above or use [this direct link](https://colab.research.google.com/drive/1hVIrS2AURs5P22nzMAcilHrTJD8VFGNg?usp=sharing)
+2. Make a copy of the notebook to your own Google Drive (File → Save a copy in Drive)
+3. Run the cells in order
+
 ## Configuration
 
 The default configuration is:
