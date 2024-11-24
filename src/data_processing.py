@@ -119,45 +119,43 @@ class DensityBasedSampler(Sampler):
         self.density = density
         if self.density:
             self.weights = self.calculate_tile_densities(inverse_density)
-
-        # Invert densities to prioritize darker tiles
-        # self.weights = np.array([1.0 / density for density in self.weights.values()])
-        # self.weights /= self.weights.sum()  # Normalize to create a probability distribution
+            self.weights /= self.weights.sum()  # Normalize to create a probability distribution
 
         # Pre-calculate valid tile positions for each image
         self.valid_positions = self._calculate_valid_positions()
 
     def _calculate_valid_positions(self) -> Dict:
         """Calculate valid tile positions for each image."""
-        positions = self.dataset.images['image_data'].apply(lambda x: (max(0, x.shape[0] - self.tile_size), max(0, x.shape[1] - self.tile_size)))
-        return torch.tensor(positions.tolist(), dtype=torch.int)
+        # positions = self.dataset.images['image_data'].apply(lambda x: (max(0, x.shape[0] - self.tile_size), max(0, x.shape[1] - self.tile_size)))
+        # return torch.tensor(positions.tolist(), dtype=torch.int)
+        image_shapes = torch.tensor([img.shape for img in self.dataset.images['image_data']])
+        return torch.clamp(image_shapes - self.tile_size, min=0)
 
     def calculate_tile_densities(self, inverse_density: bool = False) -> Dict:
         """Calculate the average pixel intensity for each image."""
-        densities =  self.dataset.images['image_data'].apply(lambda x: x.mean())
-        densities = torch.stack(densities.to_list())
+        # densities =  self.dataset.images['image_data'].apply(lambda x: x.mean())
+        # densities = torch.stack(densities.to_list())
+        densities = torch.tensor([img.mean() for img in self.dataset.images['image_data']], dtype=torch.float32)
         if inverse_density:
-            return 1.0 / densities
+            return 1.0 / (densities + 1e-6)
         return 1.0 - densities
 
     def __iter__(self):
         """Yield random tile locations based on density."""
-        for _ in range(self.samples_per_epoch):
-            # Randomly select a random image index
-            if self.density:
-                index = random.choices(self.dataset.images.index, weights=self.weights)[0]
-            else:
-                index = random.choices(self.dataset.images.index)[0]
+        # Randomly select a random image index
+        if self.density:
+            index = torch.multinomial(self.weights, self.samples_per_epoch, replacement=True)
+        else:
+            index = torch.randint(0, len(self.dataset), (self.samples_per_epoch,))
             
-            # Sample random position
-            max_row, max_col = self.valid_positions[index]
-            row = random.randint(0, max_row)
-            col = random.randint(0, max_col)
-            brain = self.dataset.images.loc[index, 'brain']
-            image_key = self.dataset.images.loc[index, 'image_key']
-            
-            yield (brain, image_key, row, col, self.tile_size)
-
+        # Sample random positions within the valid range for each image
+        selected_rows = self.dataset.images.loc[index, ['brain', 'image_key']]
+        idx =  self.valid_positions[index]
+        for i in range(self.samples_per_epoch):
+            row = random.randint(0, idx[i, 0])
+            col = random.randint(0, idx[i, 1])
+            yield selected_rows.iloc[i, 0], selected_rows.iloc[i, 1], row, col, self.tile_size
+                
     def __len__(self):
         """Return the number of samples."""
         return self.samples_per_epoch

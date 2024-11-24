@@ -11,6 +11,9 @@ import h5py
 
 torch.set_float32_matmul_precision('medium') # Use float32 matrix multiplication for better performance
 
+# uncomment the following line if you're using Windows OS
+# torch.multiprocessing.set_start_method('spawn')
+
 def main():
     parser = argparse.ArgumentParser(description="Train a Variational Autoencoder")
     parser.add_argument("--img_channels", type=int, default=1)
@@ -22,7 +25,7 @@ def main():
     parser.add_argument('--test_set', type=str, choices=['B01', 'B02', 'B05', 'B07', 'B20'], default='B20', help='Test set to use')
     parser.add_argument('--data_path', type=str, default='cell_data.h5', help='Path to the HDF5 dataset')
     parser.add_argument("--samples_per_epoch", type=int, default=1024, help="Number of samples per epoch")
-    parser.add_argument('--tile_size', type=int, default=256, help='Size of the tiles to extract')
+    parser.add_argument('--tile_size', type=int, default=64, help='Size of the tiles to extract')
     args = parser.parse_args()
 
     kwargs = vars(args)
@@ -76,8 +79,9 @@ def main():
         loss_type='H',  # Default value
         hidden_dims=None  # Default value, you can change this if needed
     )
+    model.train()
 
-    logger = TensorBoardLogger("tb_logs", name="vae_experiment")
+    logger = TensorBoardLogger("tb_logs", name=f"vae-{kwargs['test_set']}-{kwargs['latent_dim']}")
 
     # Define Model Checkpointing and Early Stopping callbacks
     checkpoint_callback = ModelCheckpoint(
@@ -92,7 +96,8 @@ def main():
     early_stopping_callback = EarlyStopping(
         monitor='val_loss',
         patience=5,  # Stop training if val_loss doesn't improve for 5 epochs
-        mode='min'
+        mode='min',
+        check_on_train_epoch_end=False
     )
 
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
@@ -103,7 +108,9 @@ def main():
         accelerator="gpu" if torch.cuda.is_available() else "auto",
         devices=1 if torch.cuda.is_available() else "auto",
         callbacks=[checkpoint_callback, early_stopping_callback, lr_monitor],
-        precision=16 if torch.cuda.is_available() else 32,
+        precision='16-mixed' if torch.cuda.is_available() else '32-true',
+        log_every_n_steps=0,  # Disable step logging
+        # log_every_n_steps=kwargs['samples_per_epoch'] // kwargs['batch_size']  # Log once per epoch
     )
     trainer.fit(model, density_dataloader, test_dataloader)
 
@@ -112,4 +119,6 @@ def main():
     # trained_model = VAE.load_from_checkpoint(best_model_path)
 
 if __name__ == "__main__":
+    # uncomment the following line if you're using Windows OS
+    # torch.multiprocessing.set_start_method('spawn')
     main()
