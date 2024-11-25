@@ -1,4 +1,5 @@
 import argparse
+import os
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -109,10 +110,13 @@ def main():
         devices=1 if torch.cuda.is_available() else "auto",
         callbacks=[checkpoint_callback, early_stopping_callback, lr_monitor],
         precision='16-mixed' if torch.cuda.is_available() else '32-true',
-        log_every_n_steps=0,  # Disable step logging
-        # log_every_n_steps=kwargs['samples_per_epoch'] // kwargs['batch_size']  # Log once per epoch
+        # log_every_n_steps=0,  # Disable step logging
+        log_every_n_steps=kwargs['samples_per_epoch'] // kwargs['batch_size']  # Log once per epoch
     )
-    trainer.fit(model, density_dataloader, test_dataloader)
+    ckpt_path = os.path.join('checkpoints', f'best-checkpoint-{kwargs["test_set"]}-{kwargs["latent_dim"]}.ckpt')
+    if not os.path.exists(ckpt_path):
+        ckpt_path = None
+    trainer.fit(model, density_dataloader, test_dataloader, ckpt_path=ckpt_path)
 
     # Load the best checkpoint and initialize the model with saved weights
     # best_model_path = checkpoint_callback.best_model_path
