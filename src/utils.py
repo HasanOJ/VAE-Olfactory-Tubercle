@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 import h5py
 import json
 import os
@@ -48,6 +49,58 @@ def calculate_statistics(data_path='cell_data.h5', test_set='B20', cache_file='s
         json.dump(cache, f)
 
     return cache[test_set]
+
+def interpolate_tiles(model, sample_batch, metadata, global_mean, global_std, same_section=True):
+
+    # Select two tiles within the same section (image_keys)
+    image_keys = metadata[1]
+
+    # Build a dataframe with images and their corresponding keys
+    df = pd.DataFrame({'key': image_keys})
+
+    if same_section:
+        # Choose a key with more than one tile
+        key1 = key2 = df['key'].value_counts().index[0]
+
+        # Select two random tiles
+        tile_1, tile_2 = sample_batch[df[df['key'] == key1].sample(2).index]
+    else:
+        # Select two random tiles from different sections
+        while True:
+            idx = df.sample(2).index
+            if df.loc[idx[0], 'key'] != df.loc[idx[1], 'key']:
+                break
+        tile_1, tile_2 = sample_batch[idx]
+        key1, key2 = df.loc[idx, 'key']
+
+    # Plot the two tiles
+    fig, axes = plt.subplots(1, 2, figsize=(5, 3))
+    axes[0].imshow(denormalize(tile_1.squeeze(0).cpu().numpy(), global_mean, global_std).squeeze(), cmap='gray')
+    axes[0].axis('off')
+    axes[0].set_title(f"Key: {key1}")
+    axes[1].imshow(denormalize(tile_2.squeeze(0).cpu().numpy(), global_mean, global_std).squeeze(), cmap='gray')
+    axes[1].axis('off')
+    axes[1].set_title(f"Key: {key2}")
+    plt.suptitle(f"Two Random Tiles from {'the Same Section' if same_section else 'Different Sections'}", fontsize=14)
+    plt.show()
+
+    z1, _ = model.encoder(tile_1.unsqueeze(0))  # Encode tile 1
+    z2, _ = model.encoder(tile_2.unsqueeze(0))  # Encode tile 2
+
+    # Interpolate between latent representations
+    k = 10  # Number of interpolation steps
+    interpolated_latents = torch.stack([z1 + t * (z2 - z1) for t in torch.linspace(0, 1, k)], dim=0)
+
+    # Decode interpolated representations
+    interpolated_images = model.decoder(interpolated_latents).detach().cpu()
+
+    # Visualize the interpolation
+    fig, axes = plt.subplots(1, k, figsize=(15, 3))
+    for i, ax in enumerate(axes):
+        ax.imshow(interpolated_images[i].squeeze(0), cmap='gray')
+        ax.axis('off')
+    plt.suptitle("Interpolation Between Two Tiles", fontsize=14)
+    plt.show()
 
 def visualize_batch(batch, metadata, global_stats):
     """

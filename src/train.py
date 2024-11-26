@@ -1,6 +1,6 @@
 import argparse
 import os
-from pytorch_lightning import Trainer
+from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
 from model import VAE
@@ -26,8 +26,16 @@ def main():
     parser.add_argument('--test_set', type=str, choices=['B01', 'B02', 'B05', 'B07', 'B20'], default='B20', help='Test set to use')
     parser.add_argument('--data_path', type=str, default='cell_data.h5', help='Path to the HDF5 dataset')
     parser.add_argument("--samples_per_epoch", type=int, default=1024, help="Number of samples per epoch")
-    parser.add_argument('--tile_size', type=int, default=64, help='Size of the tiles to extract')
+    parser.add_argument('--seed', type=int, default=0, help='Random seed for reproducibility')
+    parser.add_argument('--tile_size', type=int, default=256, help='Size of the tiles to extract')
     args = parser.parse_args()
+
+    # Use seed_everything from PyTorch Lightning as an additional layer of seed setting
+    # seed_everything(args.seed, workers=True)
+    # torch.cuda.manual_seed(args.seed)
+    # # Set a fixed value for CuDNN backend
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
 
     kwargs = vars(args)
 
@@ -96,7 +104,7 @@ def main():
 
     early_stopping_callback = EarlyStopping(
         monitor='val_loss',
-        patience=5,  # Stop training if val_loss doesn't improve for 5 epochs
+        patience=7,  # Stop training if val_loss doesn't improve for 5 epochs
         mode='min',
         check_on_train_epoch_end=False
     )
