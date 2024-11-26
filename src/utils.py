@@ -99,7 +99,7 @@ def interpolate_tiles(model, sample_batch, metadata, global_mean, global_std, sa
     for i, ax in enumerate(axes):
         ax.imshow(interpolated_images[i].squeeze(0), cmap='gray')
         ax.axis('off')
-    plt.suptitle("Interpolation Between Two Tiles", fontsize=14)
+    plt.suptitle("Interpolation Between Two Tiles in Latent Space", fontsize=14)
     plt.show()
 
 def visualize_batch(batch, metadata, global_stats):
