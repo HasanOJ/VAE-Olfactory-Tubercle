@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--data_path', type=str, default='cell_data.h5', help='Path to the HDF5 dataset')
     parser.add_argument("--samples_per_epoch", type=int, default=4096, help="Number of samples per epoch")
     parser.add_argument('--tile_size', type=int, default=128, help='Size of the tiles to extract')
+    parser.add_argument('--density', action='store_true', help='Use density-based sampling', default=False)
     # parser.add_argument('--seed', type=int, default=0, help='Random seed for reproducibility')
     args = parser.parse_args()
 
@@ -47,11 +48,30 @@ def main():
     kwargs['global_mean'] = global_stats['mean']
     kwargs['global_std'] = global_stats['std']
 
+    model = VAE(
+        in_channels=kwargs['img_channels'],
+        out_channels=kwargs['img_channels'],  # Assuming out_channels is the same as img_channels
+        latent_dim=kwargs['latent_dim'],
+        img_size=kwargs['tile_size'],
+        learning_rate=kwargs['learning_rate'],
+        beta=0.4,  # beta < 1 to increase the importance of reconstruction loss
+        hidden_dims=None  # Default value, you can change this if needed
+    )
+    model.train()
+
+    filename = f"{kwargs['test_set']}-{kwargs['tile_size']}"
+    if kwargs['density']:
+        filename += "-density"
+    else:
+        filename += "-random"
+
     # Create dataloaders
-    train_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'])
-    test_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'], tile_size=kwargs['tile_size'], testing=True)
-    density_sampler = DensityBasedSampler(train_dataset, samples_per_epoch=kwargs['samples_per_epoch'], density=True)
-    random_sampler = DensityBasedSampler(test_dataset, samples_per_epoch=kwargs['samples_per_epoch'], density=True)
+    train_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'],
+                                      tile_size=kwargs['tile_size'])
+    test_dataset = BrainTileDataset(kwargs['data_path'], global_stats, test_set=kwargs['test_set'],
+                                     tile_size=kwargs['tile_size'], testing=True)
+    density_sampler = DensityBasedSampler(train_dataset, samples_per_epoch=kwargs['samples_per_epoch'], density=kwargs['density'])
+    random_sampler = DensityBasedSampler(test_dataset, samples_per_epoch=kwargs['samples_per_epoch'], density=kwargs['density'])
     
     density_dataloader = DataLoader(
         train_dataset,
@@ -72,24 +92,13 @@ def main():
         persistent_workers=True 
     )
 
-    model = VAE(
-        in_channels=kwargs['img_channels'],
-        out_channels=kwargs['img_channels'],  # Assuming out_channels is the same as img_channels
-        latent_dim=kwargs['latent_dim'],
-        img_size=kwargs['tile_size'],
-        learning_rate=kwargs['learning_rate'],
-        beta=4,  # Default value
-        hidden_dims=None  # Default value, you can change this if needed
-    )
-    model.train()
-
-    logger = TensorBoardLogger("tb_logs", name=f"vae-{kwargs['test_set']}-{kwargs['tile_size']}")
+    logger = TensorBoardLogger("tb_logs", name="vae-" + filename)
 
     # Define Model Checkpointing and Early Stopping callbacks
     checkpoint_callback = ModelCheckpoint(
         monitor='val_loss',
         dirpath='checkpoints/',
-        filename=f'best-checkpoint-{kwargs["test_set"]}-{kwargs["tile_size"]}',
+        filename='best-checkpoint-' + filename,
         save_top_k=1,
         mode='min',
         enable_version_counter=False
@@ -114,7 +123,7 @@ def main():
         # log_every_n_steps=0,  # Disable step logging
         log_every_n_steps=kwargs['samples_per_epoch'] // kwargs['batch_size']  # Log once per epoch
     )
-    ckpt_path = os.path.join('checkpoints', f'best-checkpoint-{kwargs["test_set"]}-{kwargs["tile_size"]}.ckpt')
+    ckpt_path = os.path.join('checkpoints', f'best-checkpoint-{filename}.ckpt')
     if not os.path.exists(ckpt_path):
         ckpt_path = None
     trainer.fit(model, density_dataloader, test_dataloader, ckpt_path=ckpt_path)

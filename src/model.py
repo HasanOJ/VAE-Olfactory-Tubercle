@@ -109,11 +109,11 @@ class VAE(pl.LightningModule):
         x_hat = self.decoder(z)
         return x_hat, mu, log_var
 
-    def loss_function(self, x_hat, x, mu, log_var, kld_weight=1.0):
+    def loss_function(self, x_hat, x, mu, log_var, recons_weight=1.0):
         self.num_iter += 1
         recons_loss = F.mse_loss(x_hat, x, reduction='sum')
         kld_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        loss = recons_loss + self.beta * kld_weight * kld_loss
+        loss = recons_weight * recons_loss + self.beta * kld_loss
 
         return {'loss': loss, 'Reconstruction_Loss': recons_loss, 'KLD': kld_loss}
     

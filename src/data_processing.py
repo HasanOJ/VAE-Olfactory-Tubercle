@@ -43,6 +43,7 @@ class BrainTileDataset(Dataset):
 
         # Define augmentations
         self.transform = transforms.Compose([
+            # transforms.Normalize(mean=[self.global_mean], std=[self.global_std]),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomVerticalFlip(p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(kernel_size=5)], p=0.5), # gaussian blur
@@ -102,7 +103,7 @@ class BrainTileDataset(Dataset):
 class DensityBasedSampler(Sampler):
     """Sampler for density-based sampling of tiles."""
 
-    def __init__(self, dataset: BrainTileDataset, samples_per_epoch: int, inverse_density: bool = False, density: bool = True):
+    def __init__(self, dataset: BrainTileDataset, samples_per_epoch: int, density: bool = True):
         """
         Initialize the sampler.
         
@@ -118,7 +119,7 @@ class DensityBasedSampler(Sampler):
         self.train_brains = dataset.images['brain'].unique()
         self.density = density
         if self.density:
-            self.weights = self.calculate_tile_densities(inverse_density)
+            self.weights = self.calculate_tile_densities()
             self.weights /= self.weights.sum()  # Normalize to create a probability distribution
 
         # Pre-calculate valid tile positions for each image
@@ -131,13 +132,11 @@ class DensityBasedSampler(Sampler):
         image_shapes = torch.tensor([img.shape for img in self.dataset.images['image_data']])
         return torch.clamp(image_shapes - self.tile_size, min=0)
 
-    def calculate_tile_densities(self, inverse_density: bool = False) -> Dict:
+    def calculate_tile_densities(self) -> Dict:
         """Calculate the average pixel intensity for each image."""
         # densities =  self.dataset.images['image_data'].apply(lambda x: x.mean())
         # densities = torch.stack(densities.to_list())
         densities = torch.tensor([img.mean() for img in self.dataset.images['image_data']], dtype=torch.float32)
-        if inverse_density:
-            return 1.0 / (densities + 1e-6)
         return 1.0 - densities
 
     def __iter__(self):
