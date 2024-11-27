@@ -1,73 +1,54 @@
 # VAE-Olfactory-Tubercle
 
-This guide explains how to run the Variational Autoencoder (VAE) training pipeline for brain tile data using Google Colab. The implementation is based on the [VAE-Olfactory-Tubercle repository](https://github.com/HasanOJ/VAE-Olfactory-Tubercle).
+This repository provides a training pipeline for a Variational Autoencoder (VAE) to analyze brain tile data from olfactory tubercle microscopy images. The pipeline is designed to efficiently train and evaluate the VAE, leveraging density-based or random sampling for data preparation. 
+
+The implementation is compatible with PyTorch Lightning and optimized for use with Google Colab.
+
+---
 
 ## Quick Start
 
+You can easily get started with the training pipeline in Google Colab:
+
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1hVIrS2AURs5P22nzMAcilHrTJD8VFGNg?usp=sharing)
 
-1. Click the "Open in Colab" badge above or use [this direct link](https://colab.research.google.com/drive/1hVIrS2AURs5P22nzMAcilHrTJD8VFGNg?usp=sharing)
-2. Make a copy of the notebook to your own Google Drive (File → Save a copy in Drive)
-3. Run the cells in order
+### Steps:
+1. Click the "Open in Colab" badge above or [this link](https://colab.research.google.com/drive/1hVIrS2AURs5P22nzMAcilHrTJD8VFGNg?usp=sharing).
+2. Save a copy of the notebook to your Google Drive: **File → Save a copy in Drive**.
+3. Execute the cells sequentially to prepare the data, train the model, and evaluate the results.
+
+---
 
 ## Configuration
 
-The default configuration is:
+The default training configuration is as follows:
 ```python
 config = {
-    'img_channels': 1,
-    'feature_dim': 128,
-    'latent_dim': 128,
-    'batch_size': 64,
-    'learning_rate': 0.001,
-    'max_epochs': 100,
-    'test_set': 'B20',
-    'data_path': 'cell_data.h5',
-    'samples_per_epoch': 1024,
-    'tile_size': 64
+   'img_channels': 1,
+   'feature_dim': 128,
+   'latent_dim': 128,
+   'batch_size': 64,
+   'learning_rate': 0.001,
+   'max_epochs': 100,
+   'test_set': 'B20',
+   'data_path': 'cell_data.h5',
+   'samples_per_epoch': 1024,
+   'tile_size': 64
 }
 ```
+*Note: Adjust these parameters as needed to fit your specific requirements.*
 
-You can modify these parameters based on your needs.
-> **NOTE:** As of now, `tile_size` can only be 64 because of the current model architecture .
+---
 
-## Training Pipeline
+## Sampling Strategies
 
-The training pipeline consists of several steps:
+Two sampling strategies are implemented to generate training tiles:
+1. **Random Sampling (default):** Randomly selects tile locations without considering image properties.
+2. **Density-Based Sampling:** Prioritizes tiles with higher structural content, computed as the inverse of mean pixel intensity.
 
-1. Data Preparation
-   - Loads the dataset
-   - Calculates global statistics
-   - Creates data loaders
+The sampling strategy can be configured using the `--density` argument:
+```bash
+python main.py --density
+```
 
-2. Model Setup
-   - Initializes the VAE model
-   - Sets up logging and callbacks
-   - Configures the PyTorch Lightning trainer
-
-3. Training
-   - Trains the model with early stopping
-   - Saves the best checkpoint
-
-## Common Issues and Solutions
-
-1. **Out of Memory Errors**
-   - Reduce batch size in config
-   - Reduce number of workers in DataLoader
-   - Use mixed precision training (enabled by default)
-
-2. **Slow Training**
-   - Verify GPU is being used
-   - Adjust number of workers in DataLoader
-   - Consider reducing samples_per_epoch
-
-3. **Data Loading Issues**
-   - Verify file downloads completed successfully
-   - Check paths are correct
-   - Ensure all required files are present
-
-## Additional Resources
-
-- Original Repository: [VAE-Olfactory-Tubercle](https://github.com/HasanOJ/VAE-Olfactory-Tubercle)
-- PyTorch Lightning Documentation: [Link](https://pytorch-lightning.readthedocs.io/)
-- Google Colab Guide: [Link](https://colab.research.google.com/)
+---
