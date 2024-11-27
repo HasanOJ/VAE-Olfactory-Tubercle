@@ -43,12 +43,14 @@ config = {
 ## Sampling Strategies
 
 Two sampling strategies are implemented to generate training tiles:
+
 1. **Random Sampling (default):** Randomly selects tile locations without considering image properties.
 2. **Density-Based Sampling:** Prioritizes tiles with higher structural content, computed as the inverse of mean pixel intensity.
 
-The sampling strategy can be configured using the `--density` argument:
+To enable density-based sampling, simply add the `--density` flag when running the script:
 ```bash
 python main.py --density
 ```
+If the flag is not specified, random sampling will be used by default.
 
 ---
